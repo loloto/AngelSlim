@@ -16,9 +16,10 @@
 Stem sparse attention inference script.
 
 Usage:
-  python tools/stem.py --mode stem --model-path /path/to/Qwen3-8B --prompt-file prompt.txt
-  python tools/stem.py --mode dense --model-path /path/to/Qwen3-8B --prompt-file prompt.txt
-  python tools/stem.py --mode stem --stem-backend hpc --hpc-dtype fp8 --model-path /path/to/Qwen3-8B --prompt-file prompt.txt
+  python tools/run_stem.py --mode stem --model-path /path/to/Qwen3-8B --prompt-file prompt.txt
+  python tools/run_stem.py --mode dense --model-path /path/to/Qwen3-8B --prompt-file prompt.txt
+  python tools/run_stem.py --mode stem --stem-backend hpc \
+      --hpc-dtype fp8 --model-path /path/to/Qwen3-8B --prompt-file prompt.txt
 """
 
 import argparse
@@ -71,24 +72,61 @@ def parse_args():
         description="Stem sparse attention inference: Dense vs Stem on Qwen3.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--mode", type=str, default="stem", choices=["dense", "stem"],
-                        help="Attention mode: 'dense' (no patch) or 'stem' (Stem sparse).")
-    parser.add_argument("--stem-backend", type=str, default="torch", choices=["torch", "hpc"],
-                        help="Stem backend: 'torch' (PyTorch + Triton) or 'hpc' (HPC C++ extension).")
-    parser.add_argument("--hpc-dtype", type=str, default="bf16", choices=["bf16", "fp8"],
-                        help="HPC backend precision.")
-    parser.add_argument("--hpc-fp8-path", type=str, default="paged", choices=["paged", "varlen"],
-                        help="HPC FP8 execution path.")
-    parser.add_argument("--model-path", type=str, default=DEFAULT_MODEL_PATH,
-                        help="Path to the model directory or HuggingFace model ID.")
-    parser.add_argument("--model-name", type=str, default=DEFAULT_MODEL_NAME,
-                        help="Model name (used to determine rope_scaling config).")
-    parser.add_argument("--max-model-len", type=int, default=DEFAULT_MAX_MODEL_LEN,
-                        help="Maximum position embeddings length.")
-    parser.add_argument("--prompt-file", type=str, required=True,
-                        help="Path to a text file containing the input prompt.")
-    parser.add_argument("--max-new-tokens", type=int, default=256,
-                        help="Maximum number of new tokens to generate.")
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="stem",
+        choices=["dense", "stem"],
+        help="Attention mode: 'dense' (no patch) or 'stem' (Stem sparse).",
+    )
+    parser.add_argument(
+        "--stem-backend",
+        type=str,
+        default="torch",
+        choices=["torch", "hpc"],
+        help="Stem backend: 'torch' (PyTorch + Triton) or 'hpc' (HPC C++ extension).",
+    )
+    parser.add_argument(
+        "--hpc-dtype",
+        type=str,
+        default="bf16",
+        choices=["bf16", "fp8"],
+        help="HPC backend precision.",
+    )
+    parser.add_argument(
+        "--hpc-fp8-path",
+        type=str,
+        default="paged",
+        choices=["paged", "varlen"],
+        help="HPC FP8 execution path.",
+    )
+    parser.add_argument(
+        "--model-path",
+        type=str,
+        default=DEFAULT_MODEL_PATH,
+        help="Path to the model directory or HuggingFace model ID.",
+    )
+    parser.add_argument(
+        "--model-name",
+        type=str,
+        default=DEFAULT_MODEL_NAME,
+        help="Model name (used to determine rope_scaling config).",
+    )
+    parser.add_argument(
+        "--max-model-len",
+        type=int,
+        default=DEFAULT_MAX_MODEL_LEN,
+        help="Maximum position embeddings length.",
+    )
+    parser.add_argument(
+        "--prompt-file",
+        type=str,
+        required=True,
+        help="Path to a text file containing the input prompt.",
+    )
+    parser.add_argument(
+        "--max-new-tokens", type=int, default=256, help="Maximum number of new tokens to generate."
+    )
     return parser.parse_args()
 
 
@@ -104,7 +142,9 @@ def main():
     print("Loading model config ...")
     config = AutoConfig.from_pretrained(args.model_path, trust_remote_code=True)
     if "Qwen" in args.model_name or "qwen" in args.model_name.lower():
-        rope_theta = config.rope_scaling.get("rope_theta", 1000000) if config.rope_scaling else 1000000
+        rope_theta = (
+            config.rope_scaling.get("rope_theta", 1000000) if config.rope_scaling else 1000000
+        )
         config.rope_scaling = {
             "rope_type": "yarn",
             "rope_theta": rope_theta,
@@ -140,9 +180,11 @@ def main():
             },
         )
         model = minf(model)
-        print(
-            f"[Stem] Patch applied. backend={args.stem_backend}, hpc_dtype={args.hpc_dtype}, num_layers={num_layers}"
+        msg = (
+            f"[Stem] Patch applied. backend={args.stem_backend}, "
+            f"hpc_dtype={args.hpc_dtype}, num_layers={num_layers}"
         )
+        print(msg)
     else:
         print("[Dense] No Stem patch applied. Using standard flash_attention_2.")
 
@@ -169,7 +211,9 @@ def main():
         end = time.time()
 
         gen_ids = out[0][input_len:]
-        gen_text = tokenizer.decode(gen_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)
+        gen_text = tokenizer.decode(
+            gen_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )
 
         print("=" * 80)
         print(f"Mode: {args.mode}")

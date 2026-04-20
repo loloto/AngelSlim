@@ -1,3 +1,18 @@
+# Copyright 2025 Tencent Inc. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
 """HPC (C++ extension) backend for Stem sparse prefill.
 
 Provides three execution paths:
@@ -30,6 +45,7 @@ HPC_WINDOW_SIZE = 4
 # Tensor packing / quantisation helpers
 # ---------------------------------------------------------------------------
 
+
 def _pack_bhld_to_varlen(x: torch.Tensor) -> torch.Tensor:
     """Reshape ``(B, H, L, D)`` → ``(B*L, H, D)`` for variable-length HPC kernels."""
     B, H, L, D = x.shape
@@ -56,8 +72,11 @@ def _uniform_seq_metadata(
     """
     seqlens = torch.full((batch_size,), seq_len, dtype=torch.int32, device=device)
     cu_seqlens = torch.arange(
-        0, (batch_size + 1) * seq_len, step=seq_len,
-        dtype=torch.int32, device=device,
+        0,
+        (batch_size + 1) * seq_len,
+        step=seq_len,
+        dtype=torch.int32,
+        device=device,
     )
     return seqlens, cu_seqlens
 
@@ -98,18 +117,10 @@ def _quantize_query_for_paged_fp8(
     """
     B, H, L, D = query_states.shape
     if D != HPC_FP8_BLOCK_SIZE:
-        raise ValueError(
-            f"HPC fp8 query quant only supports head_dim=128, got {D}."
-        )
+        raise ValueError(f"HPC fp8 query quant only supports head_dim=128, got {D}.")
 
-    q_rows = (
-        query_states.transpose(1, 2)
-        .reshape(B * L, H * D)
-        .contiguous()
-    )
-    q_fp8_rows, q_scale_rows = hpc.quant.per_token_group_fp8_quant(
-        q_rows, group_size=D
-    )
+    q_rows = query_states.transpose(1, 2).reshape(B * L, H * D).contiguous()
+    q_fp8_rows, q_scale_rows = hpc.quant.per_token_group_fp8_quant(q_rows, group_size=D)
 
     q_fp8 = q_fp8_rows.view(B * L, H, D).contiguous()
     q_scale = q_scale_rows.view(B, L, H).permute(0, 2, 1).contiguous()
@@ -167,6 +178,7 @@ def _pack_paged_cache(
 # Head-repeat helper (GQA → full Q heads)
 # ---------------------------------------------------------------------------
 
+
 def _repeat_to_q_heads(x: torch.Tensor, num_q_heads: int) -> torch.Tensor:
     """Repeat KV heads to match the query head count (GQA support).
 
@@ -183,9 +195,7 @@ def _repeat_to_q_heads(x: torch.Tensor, num_q_heads: int) -> torch.Tensor:
     if num_q_heads == H_kv:
         return x
     if num_q_heads % H_kv != 0:
-        raise ValueError(
-            f"Cannot repeat kv heads from {H_kv} to {num_q_heads}."
-        )
+        raise ValueError(f"Cannot repeat kv heads from {H_kv} to {num_q_heads}.")
     n_rep = num_q_heads // H_kv
     x = x[:, :, None, :, :].expand(B, H_kv, n_rep, L, D)
     return x.reshape(B, num_q_heads, L, D)
@@ -194,6 +204,7 @@ def _repeat_to_q_heads(x: torch.Tensor, num_q_heads: int) -> torch.Tensor:
 # ---------------------------------------------------------------------------
 # Fallback to the pure-torch backend
 # ---------------------------------------------------------------------------
+
 
 def _fallback_to_torch(
     query_states: torch.Tensor,
@@ -213,6 +224,7 @@ def _fallback_to_torch(
 # ---------------------------------------------------------------------------
 # Runtime parameter extraction
 # ---------------------------------------------------------------------------
+
 
 def _stem_runtime_params(config: dict, layer_idx: int) -> dict:
     """Extract Stem runtime hyper-parameters from the user config dict."""
@@ -238,6 +250,7 @@ def _stem_runtime_params(config: dict, layer_idx: int) -> dict:
 
 # --- Path 1: bf16 dense ------------------------------------------------
 
+
 def _run_hpc_bf16_dense(
     query_states: torch.Tensor,
     key_states: torch.Tensor,
@@ -252,13 +265,12 @@ def _run_hpc_bf16_dense(
     v_varlen = _pack_bhld_to_varlen(value_states)
     seqlens_q, cu_seqlens_q = _uniform_seq_metadata(B, Lq, query_states.device)
 
-    output = hpc.attention_prefill_bf16(
-        q_varlen, k_varlen, v_varlen, seqlens_q, cu_seqlens_q, Lq
-    )
+    output = hpc.attention_prefill_bf16(q_varlen, k_varlen, v_varlen, seqlens_q, cu_seqlens_q, Lq)
     return output.view(B, Lq, H, D_v).transpose(1, 2).contiguous()
 
 
 # --- Path 2: fp8 varlen ------------------------------------------------
+
 
 def _build_varlen_stem_mask(
     query_states: torch.Tensor,
@@ -274,7 +286,9 @@ def _build_varlen_stem_mask(
         value_states = _repeat_to_q_heads(value_states, H_q)
 
     block_logits = _compute_triton_block_logits(
-        query_states, key_states, value_states,
+        query_states,
+        key_states,
+        value_states,
         block_size=params["block_size"],
         stride=params["stem_stride"],
         chunk_size=params["chunk_size"],
@@ -324,16 +338,23 @@ def _run_hpc_varlen_stem(
     mask = _build_varlen_stem_mask(query_states, key_states, value_states, params)
 
     output = hpc.attention_blocksparse_prefill_fp8(
-        q_fp8, k_fp8, v_fp8,
-        cu_q, cu_kv,
-        Lq, Lkv,
-        q_scale, k_scale, v_scale,
+        q_fp8,
+        k_fp8,
+        v_fp8,
+        cu_q,
+        cu_kv,
+        Lq,
+        Lkv,
+        q_scale,
+        k_scale,
+        v_scale,
         block_mask=mask,
     )
     return output.view(B, Lq, H_q, D_v).transpose(1, 2).contiguous()
 
 
 # --- Path 3: fp8 paged -------------------------------------------------
+
 
 def _run_hpc_paged_stem(
     query_states: torch.Tensor,
@@ -355,8 +376,7 @@ def _run_hpc_paged_stem(
     _, _, Lkv, D_v = value_states.shape
     if Lkv < Lq:
         raise ValueError(
-            f"Paged HPC prefill requires kv_len >= q_len, "
-            f"got kv_len={Lkv}, q_len={Lq}."
+            f"Paged HPC prefill requires kv_len >= q_len, " f"got kv_len={Lkv}, q_len={Lq}."
         )
 
     history_len = Lkv - Lq
@@ -376,9 +396,15 @@ def _run_hpc_paged_stem(
 
     # --- Step 1: generate sparse mask -------------------------------------
     mask = hpc.stem_paged_kv(
-        q_fp8, kcache, vcache,
-        q_scale, k_scale, v_scale,
-        kv_indices, cu_q, visible_kv_lens,
+        q_fp8,
+        kcache,
+        vcache,
+        q_scale,
+        k_scale,
+        v_scale,
+        kv_indices,
+        cu_q,
+        visible_kv_lens,
         lambda_mag=params["lambda_mag"],
         alpha=params["alpha"],
         stem_block_size=params["block_size"],
@@ -392,11 +418,16 @@ def _run_hpc_paged_stem(
 
     # --- Step 2: block-sparse attention -----------------------------------
     output = hpc.attention_with_kvcache_blocksparse_prefill_fp8(
-        q_fp8, kcache, vcache,
-        q_scale, k_scale, v_scale,
-        cu_q, kv_indices,
-        history_kv_lens,   # history length (not total visible!)
-        Lq,                # max_seqlens_q
+        q_fp8,
+        kcache,
+        vcache,
+        q_scale,
+        k_scale,
+        v_scale,
+        cu_q,
+        kv_indices,
+        history_kv_lens,  # history length (not total visible!)
+        Lq,  # max_seqlens_q
         mask,
     )
     return output.view(B, Lq, H_q, D_v).transpose(1, 2).contiguous()
@@ -405,6 +436,7 @@ def _run_hpc_paged_stem(
 # ===================================================================== #
 #  Top-level HPC dispatcher                                              #
 # ===================================================================== #
+
 
 def stem_forward_hpc(
     query_states: torch.Tensor,
@@ -443,7 +475,9 @@ def stem_forward_hpc(
             if strict_hpc:
                 raise RuntimeError(f"HPC bf16 backend failed: {exc}") from exc
             if layer_idx == 0:
-                print(f"[Stem][HPC] bf16 dense path failed ({exc}); falling back to torch backend.")
+                print(
+                    f"[Stem][HPC] bf16 dense path failed ({exc}); falling back to torch backend."
+                )
             return _fallback_to_torch(query_states, key_states, value_states, prefill_kwargs)
 
     # --- FP8 sparse path: validate dimensions -----------------------------
@@ -465,9 +499,7 @@ def stem_forward_hpc(
 
     if dim_qk != 128 or dim_v != 128:
         if strict_hpc:
-            raise RuntimeError(
-                f"Unsupported HPC fp8 head dims: dim_qk={dim_qk}, dim_v={dim_v}."
-            )
+            raise RuntimeError(f"Unsupported HPC fp8 head dims: dim_qk={dim_qk}, dim_v={dim_v}.")
         if layer_idx == 0:
             print(
                 f"[Stem][HPC] unsupported fp8 head dims dim_qk={dim_qk}, "

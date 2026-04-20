@@ -56,7 +56,7 @@ $$\text{score}(Q_i, K_j) = \frac{Q_i \cdot K_j^T}{\sqrt{d} \cdot s \cdot n} + \l
 ### Dense 对照（无 Stem patch）
 
 ```bash
-python tools/stem.py \
+python tools/run_stem.py \
     --mode dense \
     --model-path /path/to/Qwen3-8B \
     --prompt-file prompt.txt \
@@ -66,7 +66,7 @@ python tools/stem.py \
 ### Stem + HPC bf16
 
 ```bash
-python tools/stem.py \
+python tools/run_stem.py \
     --mode stem \
     --stem-backend hpc \
     --hpc-dtype bf16 \
@@ -78,7 +78,7 @@ python tools/stem.py \
 ### Stem + HPC fp8
 
 ```bash
-python tools/stem.py \
+python tools/run_stem.py \
     --mode stem \
     --stem-backend hpc \
     --hpc-dtype fp8 \
@@ -90,7 +90,7 @@ python tools/stem.py \
 ### 使用自定义 prompt
 
 ```bash
-python tools/stem.py \
+python tools/run_stem.py \
     --mode stem \
     --stem-backend hpc \
     --hpc-dtype bf16 \
@@ -127,7 +127,7 @@ angelslim/compressor/sparsity/
 ├── __init__.py                          # re-export StemInference
 └── stem/
     ├── __init__.py                      # 包入口
-    ├── models_patch.py                  # StemInference 类
+    ├── stem.py                          # StemInference 类（主入口）
     ├── patch.py                         # 模型 patch 逻辑
     ├── stem_configuration.py            # StemConfig 配置
     ├── backends/
@@ -139,7 +139,7 @@ angelslim/compressor/sparsity/
     └── ops/
         └── stem_kernel.py               # Triton kernel
 
-tools/stem.py                            # 推理入口
+tools/run_stem.py                            # 推理入口
 scripts/sparsity/run_stem.sh             # 启动脚本
 ```
 

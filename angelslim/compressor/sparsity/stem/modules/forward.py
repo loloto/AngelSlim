@@ -1,3 +1,18 @@
+# Copyright 2025 Tencent Inc. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
 """Stem-patched attention forward pass.
 
 This module provides the replacement ``forward`` method that is bound to each
@@ -14,7 +29,6 @@ The code mirrors the structure of
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Optional
 
 import torch
 from torch import nn
@@ -25,10 +39,10 @@ from transformers.processing_utils import Unpack
 
 from ..backends import stem_forward
 
-
 # ---------------------------------------------------------------------------
 # Helper functions (identical to upstream Qwen3)
 # ---------------------------------------------------------------------------
+
 
 def rotate_half(x: torch.Tensor) -> torch.Tensor:
     """Rotate the last dimension by splitting and concatenating halves."""
@@ -60,13 +74,16 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     if n_rep == 1:
         return hidden_states
     batch, num_key_value_heads, slen, head_dim = hidden_states.shape
-    hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_key_value_heads, n_rep, slen, head_dim)
+    hidden_states = hidden_states[:, :, None, :, :].expand(
+        batch, num_key_value_heads, n_rep, slen, head_dim
+    )
     return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
 
 
 # ---------------------------------------------------------------------------
 # Fallback eager attention (used in decode phase, mirrors upstream)
 # ---------------------------------------------------------------------------
+
 
 def eager_attention_forward(
     module: nn.Module,
@@ -103,9 +120,8 @@ def eager_attention_forward(
 # Validation
 # ---------------------------------------------------------------------------
 
-def _assert_no_padding_mask_for_stem(
-    attention_mask: torch.Tensor, k_len: int
-) -> None:
+
+def _assert_no_padding_mask_for_stem(attention_mask: torch.Tensor, k_len: int) -> None:
     """Verify that the attention mask has no padding (required by Stem prefill).
 
     Raises
@@ -115,19 +131,16 @@ def _assert_no_padding_mask_for_stem(
         entries (indicating padding tokens).
     """
     if attention_mask.ndim != 4:
-        raise ValueError(
-            f"attention_mask must be 4-D, got shape={tuple(attention_mask.shape)}"
-        )
+        raise ValueError(f"attention_mask must be 4-D, got shape={tuple(attention_mask.shape)}")
     last_row = attention_mask[:, :, -1, :k_len]
     if not torch.isfinite(last_row).all():
-        raise ValueError(
-            "Stem prefill requires no padding mask (last query row has -inf)."
-        )
+        raise ValueError("Stem prefill requires no padding mask (last query row has -inf).")
 
 
 # ---------------------------------------------------------------------------
 # Patched attention forward
 # ---------------------------------------------------------------------------
+
 
 def attn_forward(
     self,

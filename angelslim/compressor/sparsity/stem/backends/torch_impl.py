@@ -1,3 +1,18 @@
+# Copyright 2025 Tencent Inc. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
 """Pure-PyTorch implementation of the Stem sparse prefill.
 
 This module provides two main entry points:
@@ -21,8 +36,7 @@ try:
     HAS_BLOCK_SPARSE_KERNEL = True
 except ImportError:
     print(
-        "⚠️ [Stem] 'block_sparse_attn' not found. "
-        "Falling back to pseudo-sparse implementation."
+        "⚠️ [Stem] 'block_sparse_attn' not found. " "Falling back to pseudo-sparse implementation."
     )
     HAS_BLOCK_SPARSE_KERNEL = False
 
@@ -36,8 +50,8 @@ _DEFAULT_LAYER_KEEP_RATIOS: list[float] = [1.0, 1.0] + [0.2] * 36
 
 # Short-sequence thresholds — below these lengths the sparsity schedule is
 # relaxed to avoid losing too much context.
-_SHORT_SEQ_THRESHOLD_FULL = 56       # keep-all threshold
-_SHORT_SEQ_THRESHOLD_LINEAR = 160    # linear blend threshold
+_SHORT_SEQ_THRESHOLD_FULL = 56  # keep-all threshold
+_SHORT_SEQ_THRESHOLD_LINEAR = 160  # linear blend threshold
 _SHORT_SEQ_LINEAR_RATE = 0.2
 _SHORT_SEQ_LINEAR_BIAS = 30
 _LONG_SEQ_RATE = 0.1
@@ -99,14 +113,11 @@ def generate_exact_k_schedule(
                 dtype=torch.float64,
                 device=device,
             )
-            schedule[k_val:] = torch.clamp(
-                torch.floor(ideal_vals).long(), min=1, max=k_val
-            )
+            schedule[k_val:] = torch.clamp(torch.floor(ideal_vals).long(), min=1, max=k_val)
         return schedule
 
     schedules = [
-        _build_single_schedule(int(ratio * num_blocks), num_blocks)
-        for ratio in per_head_ratios
+        _build_single_schedule(int(ratio * num_blocks), num_blocks) for ratio in per_head_ratios
     ]
     stacked = torch.stack(schedules, dim=0)
     return stacked.squeeze(0) if stacked.shape[0] == 1 else stacked
@@ -115,6 +126,7 @@ def generate_exact_k_schedule(
 # ---------------------------------------------------------------------------
 # Block-level importance scoring
 # ---------------------------------------------------------------------------
+
 
 def _block_downsample(
     x: torch.Tensor,
@@ -224,9 +236,7 @@ def _compute_triton_block_logits(
     chunk_base = (pad_Kb - pad_Qb) * reshaped_block_size
 
     # --- Step 2: value-norm bonus term ------------------------------------
-    v_down = _block_downsample(
-        pad_value_states, pad_k_len, k_down_len, stride
-    ).squeeze(-1)
+    v_down = _block_downsample(pad_value_states, pad_k_len, k_down_len, stride).squeeze(-1)
     v_log_norm = torch.log(v_down + 1e-6)
 
     LAMBDA_MAG = 0.2  # magnitude of the value-norm bonus
@@ -245,12 +255,8 @@ def _compute_triton_block_logits(
     v_bonus = LAMBDA_MAG * v_log_norm
 
     # --- Step 3: chunked strided Q·K^T via Triton -------------------------
-    scores = torch.zeros(
-        (B, H, q_down_len, k_down_len), dtype=dtype, device=device
-    )
-    scale = query_states.new_tensor(
-        1.0 / (math.sqrt(head_dim) * stride * norm), dtype=dtype
-    )
+    scores = torch.zeros((B, H, q_down_len, k_down_len), dtype=dtype, device=device)
+    scale = query_states.new_tensor(1.0 / (math.sqrt(head_dim) * stride * norm), dtype=dtype)
     q_chunk_num = pad_q_len // chunk_size
 
     for chunk_idx in range(q_chunk_num):
@@ -294,6 +300,7 @@ def _compute_triton_block_logits(
 # Stem prefill — torch backend
 # ---------------------------------------------------------------------------
 
+
 def stem_forward_torch(
     query_states: torch.Tensor,
     key_states: torch.Tensor,
@@ -330,7 +337,7 @@ def stem_forward_torch(
     B, H, Lq, head_dim = query_states.shape
     _, _, Tk, _ = key_states.shape
 
-    scaling = head_dim ** -0.5
+    scaling = head_dim**-0.5
     Qb = (Lq + block_size - 1) // block_size
     Kb = (Tk + block_size - 1) // block_size
 
@@ -340,7 +347,9 @@ def stem_forward_torch(
 
     # --- 1. Block-level scoring -------------------------------------------
     block_logits = _compute_triton_block_logits(
-        query_states, key_states, value_states,
+        query_states,
+        key_states,
+        value_states,
         block_size=block_size,
         stride=stride,
         chunk_size=chunk_size,
@@ -349,27 +358,19 @@ def stem_forward_torch(
     )
 
     # --- 2. Per-layer sparsity schedule -----------------------------------
-    mask_block = torch.zeros(
-        (B, H, Qb, Kb), device=query_states.device, dtype=torch.bool
-    )
+    mask_block = torch.zeros((B, H, Qb, Kb), device=query_states.device, dtype=torch.bool)
 
     alpha = config_alpha[layer_idx] if isinstance(config_alpha, (list, tuple)) else config_alpha
-    sched = generate_exact_k_schedule(
-        Qb, alpha, layer_idx, query_states.device, num_heads=H
-    )
+    sched = generate_exact_k_schedule(Qb, alpha, layer_idx, query_states.device, num_heads=H)
     growth = max(1.0, alpha)
 
     if sched.dim() == 1:
-        head_needed = torch.clamp(
-            torch.ceil(sched[0].to(torch.float32) * growth), max=Kb
-        )
+        head_needed = torch.clamp(torch.ceil(sched[0].to(torch.float32) * growth), max=Kb)
         needed_k = int(head_needed.item())
         budget = sched.view(1, 1, -1, 1)
     else:
         if sched.shape[0] != H:
-            raise ValueError(
-                "Per-head k_start configuration does not match number of heads."
-            )
+            raise ValueError("Per-head k_start configuration does not match number of heads.")
         head_start = sched[:, 0].to(torch.float32)
         head_needed = torch.clamp(torch.ceil(head_start * growth), max=Kb)
         needed_k = int(head_needed.max().item())
@@ -414,23 +415,33 @@ def stem_forward_torch(
         v_kernel = value_states.transpose(1, 2).reshape(B * Tk, H, head_dim)
 
         q_cu = torch.arange(
-            0, (B + 1) * Lq, step=Lq,
-            dtype=torch.int32, device=query_states.device,
+            0,
+            (B + 1) * Lq,
+            step=Lq,
+            dtype=torch.int32,
+            device=query_states.device,
         )
         k_cu = torch.arange(
-            0, (B + 1) * Tk, step=Tk,
-            dtype=torch.int32, device=query_states.device,
+            0,
+            (B + 1) * Tk,
+            step=Tk,
+            dtype=torch.int32,
+            device=query_states.device,
         )
         head_mask_type = torch.ones(H, dtype=torch.int32, device=query_states.device)
 
         torch.cuda.synchronize()
         attn_output = block_sparse_attn_func(
-            q_kernel, k_kernel, v_kernel,
-            q_cu, k_cu,
+            q_kernel,
+            k_kernel,
+            v_kernel,
+            q_cu,
+            k_cu,
             head_mask_type,
             None,
             mask_block.contiguous(),
-            Lq, Tk,
+            Lq,
+            Tk,
             p_dropout=0.0,
             deterministic=True,
             is_causal=True,
@@ -440,8 +451,8 @@ def stem_forward_torch(
 
     # Fallback: pseudo-sparse attention (expand block mask to full mask).
     mask_full = (
-        mask_block
-        .unsqueeze(-1).unsqueeze(-3)
+        mask_block.unsqueeze(-1)
+        .unsqueeze(-3)
         .expand(-1, -1, -1, block_size, -1, block_size)
         .reshape(B, H, Qb * block_size, Kb * block_size)
     )
@@ -449,12 +460,8 @@ def stem_forward_torch(
 
     attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * scaling
     if Lq > 1:
-        causal_bool = torch.ones(
-            (Lq, Tk), device=query_states.device, dtype=torch.bool
-        ).triu(1)
-        attn_weights = attn_weights.masked_fill(
-            causal_bool[None, None, :, :], float("-inf")
-        )
+        causal_bool = torch.ones((Lq, Tk), device=query_states.device, dtype=torch.bool).triu(1)
+        attn_weights = attn_weights.masked_fill(causal_bool[None, None, :, :], float("-inf"))
 
     attn_weights = attn_weights.masked_fill(~mask_full, float("-inf"))
     probs = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
