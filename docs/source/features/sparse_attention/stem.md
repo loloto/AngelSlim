@@ -102,7 +102,7 @@ python tools/run_stem.py \
 也可以通过封装脚本启动：
 
 ```bash
-bash scripts/sparsity/run_stem.sh /path/to/Qwen3-8B stem
+bash scripts/sparsity/run_stem.sh /path/to/Qwen3-8B prompt.txt stem
 ```
 
 ## 5. 参数说明
